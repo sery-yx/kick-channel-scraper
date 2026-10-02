@@ -1,0 +1,17 @@
+{
+  "name": "kick-channel-scraper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Adds the most watched live Kick channels to a rustlog-kick instance",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "once": "node script.js"
+  },
+  "dependencies": {
+    "node-cron": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
