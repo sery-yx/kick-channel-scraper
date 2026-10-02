@@ -1,0 +1,48 @@
+# Runs the Kick channel scraper (index.js, a job every 15 minutes) in a container.
+#
+#   cp .env.example .env            and fill it in
+#   docker compose up -d --build
+#   docker compose logs -f
+#
+# A single run, to try the credentials and the instance address (script.js, the top 1000 channels):
+#   docker compose run --rm kick-channel-scraper node script.js
+
+services:
+  kick-channel-scraper:
+    build: .
+    image: kick-channel-scraper
+    restart: unless-stopped
+
+    # compose stops with the message after :? when one of these is missing or empty in .env
+    environment:
+      KICK_CLIENT_ID: "${KICK_CLIENT_ID:?set KICK_CLIENT_ID in .env}"
+      KICK_CLIENT_SECRET: "${KICK_CLIENT_SECRET:?set KICK_CLIENT_SECRET in .env}"
+      RUSTLOG_API_KEY: "${RUSTLOG_API_KEY:?set RUSTLOG_API_KEY in .env}"
+      # required because the default of the app, 127.0.0.1, would be the container itself
+      RUSTLOG_URL: "${RUSTLOG_URL:?set RUSTLOG_URL in .env}"
+
+    # lets http://host.docker.internal:8025 reach a rustlog-kick that runs on the server itself
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # the app only makes outgoing requests and writes no files
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    # docker keeps the logs of a container forever by default
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# When rustlog-kick runs in a container of another compose project, join the network of that project
+# (and use the service name of rustlog-kick in RUSTLOG_URL, http://<service name>:8025):
+#
+# networks:
+#   default:
+#     name: <network of the rustlog-kick project>
+#     external: true

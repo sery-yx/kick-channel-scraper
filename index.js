@@ -1,12 +1,13 @@
 const cron = require('node-cron');
 
-// Kick version of the Twitch channel scraper: every 15 minutes it takes the 5000 most watched live
-// channels on Kick and adds the ones the rustlog-kick instance does not log yet.
+// Kick version of the Twitch channel scraper: every 15 minutes (and once when it starts) it takes the
+// 5000 most watched live channels on Kick and adds the ones the rustlog-kick instance does not log yet.
 //
 // Environment variables:
 //   KICK_CLIENT_ID, KICK_CLIENT_SECRET   credentials of a Kick app (kick.com/settings/developer),
 //                                        for example the one rustlog-kick uses
 //   RUSTLOG_URL                          address of the rustlog-kick instance, http://127.0.0.1:8025 if unset
+//                                        (inside a container 127.0.0.1 is the container itself, see docker-compose.yml)
 //   RUSTLOG_API_KEY                      adminAPIKey of the instance
 
 const KICK_CLIENT_ID = process.env.KICK_CLIENT_ID;
@@ -14,6 +15,7 @@ const KICK_CLIENT_SECRET = process.env.KICK_CLIENT_SECRET;
 const INSTANCE_URL = (process.env.RUSTLOG_URL || 'http://127.0.0.1:8025').replace(/\/+$/, '');
 const INSTANCE_API_KEY = process.env.RUSTLOG_API_KEY;
 
+const SCHEDULE = '*/15 * * * *';
 const CHANNEL_LIMIT = 5000;
 // the most Kick returns per request (Twitch: 100)
 const PAGE_SIZE = 1000;
@@ -168,7 +170,51 @@ async function handle() {
     console.log(`added ${newChannels.length} new channels to logs`);
 }
 
-cron.schedule('*/15 * * * *', () => {
-    console.log(`Running job at ${new Date().toLocaleTimeString()}`);
-    handle().catch(error => console.error(`job failed: ${error.message}`));
-});
+let currentJob = null;
+
+function runJob() {
+    // a slow job (Kick rate limiting it, for example) must not be started a second time
+    if (currentJob) {
+        console.log('previous job is still running, skipping this run');
+        return;
+    }
+
+    console.log(`Running job at ${new Date().toISOString()}`);
+
+    currentJob = handle()
+        .catch(error => console.error(`job failed: ${error.message}`))
+        .finally(() => {
+            currentJob = null;
+        });
+}
+
+const task = cron.schedule(SCHEDULE, runJob);
+
+let stopping = false;
+
+// docker stop sends SIGTERM and kills the container if it is still running 10 seconds later
+function shutdown(signal) {
+    // a second signal does not wait for the job any longer
+    if (stopping) process.exit(1);
+
+    stopping = true;
+    console.log(`${signal} received, shutting down`);
+
+    task.stop();
+
+    // once the running job is done nothing keeps the process alive anymore and it exits by itself,
+    // this timer is only for a job that hangs
+    setTimeout(() => {
+        console.error('job did not finish in time, exiting anyway');
+        process.exit(1);
+    }, 8000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+console.log(`started, rustlog-kick instance ${INSTANCE_URL}, schedule "${SCHEDULE}"`);
+
+// the schedule only fires on every 15th minute, but a container that was just started should show
+// in its logs right away whether the credentials and the instance address work
+runJob();
